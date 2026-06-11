@@ -1,0 +1,153 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+
+# 1. Page Configuration
+st.set_page_config(
+    page_title="Sales & Revenue Analytics Dashboard",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS for a polished look
+st.markdown("""
+    <style>
+    .metric-container {
+        background-color: #f8f9fa;
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
+    }
+    </style>
+""", unsafe_with_html=True)
+
+# 2. Sidebar / Data Input Layer
+st.sidebar.title("📁 Data Ingestion")
+st.sidebar.markdown("Upload your business transaction data (CSV or Excel format).")
+
+uploaded_file = st.sidebar.file_uploader("Choose a file", type=['csv', 'xlsx'])
+
+# 3. Helper Functions for Data Processing
+@st.cache_data
+def load_data(file):
+    try:
+        if file.name.endswith('.csv'):
+            df = pd.read_csv(file)
+        else:
+            df = pd.read_excel(file)
+        
+        # Standardize column names to lowercase/stripped for resilience
+        df.columns = df.columns.str.strip().str.lower()
+        
+        # Datetime transformation
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'])
+            df['month_year'] = df['date'].dt.to_period('M').astype(str)
+        
+        return df
+    except Exception as e:
+        st.error(f"Error processing file: {e}")
+        return None
+
+# 4. Main Dashboard Logic
+st.title("📊 Sales & Revenue Analytics Dashboard")
+st.markdown("Transforming transactional data into actionable business intelligence.")
+st.write("---")
+
+if uploaded_file is not None:
+    df = load_data(uploaded_file)
+    
+    if df is not None:
+        # Check required columns
+        required_cols = {'revenue', 'quantity', 'product'}
+        if not required_cols.issubset(df.columns):
+            st.warning(f"⚠️ Your file is missing one of the required columns: {required_cols}. Please verify your headers.")
+            st.stop()
+
+        # Dynamic Sidebar Filters (Slicers)
+        st.sidebar.title("🔍 Interactive Filters")
+        
+        # Filter by Region if column exists
+        if 'region' in df.columns:
+            regions = ['All'] + list(df['region'].unique())
+            selected_region = st.sidebar.selectbox("Select Region", regions)
+            if selected_region != 'All':
+                df = df[df['region'] == selected_region]
+
+        # Filter by Category if column exists
+        if 'category' in df.columns:
+            categories = ['All'] + list(df['category'].unique())
+            selected_category = st.sidebar.selectbox("Select Category", categories)
+            if selected_category != 'All':
+                df = df[df['category'] == selected_category]
+
+        # --- LAYER 1: KPI Summary Metrics ---
+        total_revenue = df['revenue'].sum()
+        total_units = df['quantity'].sum()
+        total_orders = len(df)
+        aov = total_revenue / total_orders if total_orders > 0 else 0
+
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric(label="💰 Total Revenue", value=f"${total_revenue:,.2f}")
+        with col2:
+            st.metric(label="📦 Units Sold", value=f"{total_units:,}")
+        with col3:
+            st.metric(label="🛒 Average Order Value (AOV)", value=f"${aov:,.2f}")
+
+        st.write("##")
+
+        # --- LAYER 2: Advanced Visualizations ---
+        chart_col1, chart_col2 = st.columns(2)
+
+        with chart_col1:
+            st.subheader("📈 Revenue Trend Over Time")
+            if 'month_year' in df.columns:
+                trend_df = df.groupby('month_year')['revenue'].sum().reset_index()
+                trend_df = trend_df.sort_values('month_year')
+                
+                fig_trend = px.line(
+                    trend_df, x='month_year', y='revenue',
+                    markers=True, labels={'month_year': 'Month', 'revenue': 'Revenue ($)'},
+                    template='plotly_white', color_discrete_sequence=['#1f77b4']
+                )
+                st.plotly_chart(fig_trend, use_container_width=True)
+            else:
+                st.info("Add a 'Date' column to unlock time-series trend analysis.")
+
+        with chart_col2:
+            st.subheader("🏆 Top Performing Products by Revenue")
+            product_df = df.groupby('product')['revenue'].sum().reset_index()
+            product_df = product_df.sort_values('revenue', ascending=False).head(10)
+            
+            fig_product = px.bar(
+                product_df, x='revenue', y='product',
+                orientation='h', labels={'revenue': 'Total Revenue ($)', 'product': 'Product'},
+                template='plotly_white', color='revenue', color_continuous_scale='Blues'
+            )
+            fig_product.update_layout(yaxis={'categoryorder':'total ascending'})
+            st.plotly_chart(fig_product, use_container_width=True)
+
+        # --- LAYER 3: Data Inspection Table ---
+        st.write("---")
+        st.subheader("📋 Granular Data View")
+        st.dataframe(df.head(100), use_container_width=True)
+        
+else:
+    # Landing state when no file is uploaded
+    st.info("💡 **Getting Started:** Please upload a CSV or Excel file in the sidebar to populate the dashboard analytics.")
+    
+    # Provide a sample dataset blueprint for the user
+    st.markdown("""
+    ### Expected Data Format Example:
+    Your uploaded file should ideally include headers matching or similar to these:
+    
+    | Date | Product | Category | Revenue | Quantity | Region |
+    |---|---|---|---|---|---|
+    | 2026-01-15 | Wireless Mouse | Electronics | 1500.00 | 50 | North |
+    | 2026-01-16 | Ergonomic Chair | Office Supply | 4500.00 | 15 | South |
+    | 2026-02-01 | Mechanical Keyboard | Electronics | 2400.00 | 20 | East |
+    """)
